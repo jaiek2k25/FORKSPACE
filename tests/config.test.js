@@ -133,6 +133,11 @@ test('security headers: always present, and API responses are never cached', () 
   assert.ok(!/unsafe-inline/.test(doc['Content-Security-Policy']), 'no inline scripts anywhere');
   assert.equal(doc['X-Content-Type-Options'], 'nosniff');
   assert.equal(doc['Referrer-Policy'], 'no-referrer');
+  // Only a document that may load map tiles is allowed to send a referrer, and
+  // only the bare origin even then.
+  assert.equal(securityHeaders({ document: true })['Referrer-Policy'], 'no-referrer', 'no tile origin, no referrer');
+  assert.equal(securityHeaders({ document: true, tileOrigin: 'https://tile.openstreetmap.org' })['Referrer-Policy'], 'strict-origin-when-cross-origin');
+  assert.equal(securityHeaders({ tileOrigin: 'https://tile.openstreetmap.org' })['Referrer-Policy'], 'no-referrer', 'non-documents never send a referrer');
   assert.match(doc['Permissions-Policy'], /camera=\(\)/);
   assert.match(doc['Permissions-Policy'], /geolocation=\(\)/);
   assert.match(doc['Permissions-Policy'], /microphone=\(\)/);
@@ -140,6 +145,35 @@ test('security headers: always present, and API responses are never cached', () 
 
   const api = securityHeaders({ api: true });
   assert.equal(api['Cache-Control'], 'no-store, no-cache, must-revalidate');
+});
+
+test('configuration: map defaults, and the tile URL is validated like any upstream', () => {
+  const base = loadConfig({ PORT: '5173' });
+  assert.deepEqual(base.errors, []);
+  assert.equal(base.config.map.enabled, true);
+  assert.equal(base.config.map.tileUrl, 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+  assert.equal(base.config.map.tileOrigin, 'https://tile.openstreetmap.org');
+  assert.equal(base.config.map.maxZoom, 19);
+  assert.equal(base.config.map.minZoom, 3);
+  assert.match(base.config.map.attribution, /OpenStreetMap/);
+
+  const override = loadConfig({ PORT: '5173', MAP_TILE_URL: 'https://tiles.example.test/{z}/{x}/{y}.png', MAP_MAX_ZOOM: '17' });
+  assert.deepEqual(override.errors, []);
+  assert.equal(override.config.map.tileOrigin, 'https://tiles.example.test', 'a provider can be switched from configuration alone');
+  assert.equal(override.config.map.maxZoom, 17);
+
+  const off = loadConfig({ PORT: '5173', MAP_ENABLED: 'no' });
+  assert.deepEqual(off.errors, []);
+  assert.equal(off.config.map.enabled, false);
+  assert.equal(off.config.map.tileUrl, '');
+  // A URL that would never be used must not be validated into a start-up error.
+  assert.deepEqual(loadConfig({ PORT: '5173', MAP_ENABLED: '0', MAP_TILE_URL: 'http://anything' }).errors, []);
+
+  const bad = loadConfig({ PORT: '5173', MAP_TILE_URL: 'https://tiles.example.test/{x}/{y}.png' });
+  assert.equal(bad.errors.length, 1);
+  assert.equal(bad.errors[0].field, 'MAP_TILE_URL');
+  assert.equal(bad.errors[0].message.includes('{z}'), true);
+  assert.equal(bad.errors[0].message.includes('tiles.example.test'), false, 'the message never echoes the configured value');
 });
 
 test('.env loader: values already set in the environment always win', async () => {

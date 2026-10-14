@@ -58,8 +58,12 @@ Enforced in code, covered by tests:
 
 * **Content-Security-Policy** — `script-src 'self'`, `style-src 'self'`, `font-src 'self'`,
   `connect-src 'self'`, `frame-ancestors 'self'`, `object-src 'none'`, `base-uri 'none'`.
-  No inline scripts, no inline styles, and no third-party requests of any kind: the browser
-  loads only this application's own files.
+  No inline scripts, no inline styles, and no third-party scripts at all. The single remote
+  entry is the configured tile origin in `img-src`, and only when `MAP_ENABLED=1`: map tiles
+  are images and nothing else leaves the origin.
+* **Referrer-Policy** — `no-referrer`, except for the app shell, which sends
+  `strict-origin-when-cross-origin` so the tile policy's Referer requirement is met without
+  disclosing a path. With `MAP_ENABLED=0` the shell sends no referrer either.
 * **Static allowlist** — `index.html`, `css/`, `src/`, `assets/` and `docs/` are served.
   Everything else is 404: `server/`, `tests/`, `tools/`, `data-imports/`, `package.json`,
   `README.md`, `.env`, and the ONS spreadsheet. Traversal is rejected after normalisation.
@@ -88,6 +92,13 @@ Enforced in code, covered by tests:
 4. Set `GEOCODER_CONTACT` before enabling geocoding. The geocoder stays off without it.
 5. Check that `/api/listings` reports `demoOnly: false` once real records are in place —
    the flag drives the disclosure the interface shows.
+6. Decide where map tiles come from before you carry traffic. `MAP_TILE_URL` defaults to
+   the OpenStreetMap Foundation's donated servers, which are best-effort with no SLA and are
+   not sized for a commercial load. Point it at a provider you have arranged, or set
+   `MAP_ENABLED=0` to ship the map view with its written explanation and no external host.
+   Attribution is drawn by the application and must stay visible: the data is ODbL.
+7. Remember that only a record with a checked location is plotted. `docs/LISTING_SCHEMA.md`
+   describes the `coordinates` block, and a demo record is refused coordinates outright.
 
 ## Verifying a deployment
 

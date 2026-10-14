@@ -192,7 +192,8 @@ function limitsSection() {
       el('li', null, 'It does not scrape map services. Geocoding, when enabled, uses the published Nominatim policy with one request per second, an identifying contact, a refusal to follow redirects, and no autocomplete or bulk use.'),
       el('li', null, 'It does not present an estimate as a fact, an unknown as a zero, or a sample home as a real one.'),
       el('li', null, 'It does not call a map provider for demo records, because they have no coordinates and no verified address.'),
-      el('li', null, 'It does not fetch anything from the browser: no third-party analytics, no tracking pixels, no font or script from anywhere except its own origin.')
+      el('li', null, 'It does not fetch anything from the browser: no third-party analytics, no tracking pixels, no font and no script from anywhere except its own origin. Leaflet is served from this origin too.'),
+      el('li', null, 'The one remote request the browser can make is a map tile, and only from the single host configured in MAP_TILE_URL, only for the area on screen, and only images. Everything else — scripts, styles, fonts, API calls — is same-origin, and the Content-Security-Policy enforces it.')
     )
   );
 }

@@ -32,11 +32,26 @@ export const DEFAULTS = Object.freeze({
   GEOCODE_CACHE_TTL_MS: 30 * 24 * 60 * 60 * 1000,
   GEOCODE_TIMEOUT_MS: 12000,
   GOOGLE_GEOCODE_URL: 'https://maps.googleapis.com/maps/api/geocode/json',
+  // The exact URL the OpenStreetMap tile usage policy requires. It is a default,
+  // not a constant: MAP_TILE_URL lets an operator switch provider without waiting
+  // for a software update.
+  MAP_TILE_URL: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+  MAP_MAX_ZOOM: 19,
+  MAP_MIN_ZOOM: 3,
   HEADERS_TIMEOUT_MS: 15000,
   REQUEST_TIMEOUT_MS: 30000
 });
 
 const HTTPS = /^https:\/\//i;
+
+/** The origin of a tile template, used to allow exactly one remote host. */
+function tileOriginOf(tileUrl) {
+  try {
+    return new URL(tileUrl).origin;
+  } catch {
+    return '';
+  }
+}
 
 function intFrom(value, fallback) {
   if (value === undefined || value === '') return fallback;
@@ -65,6 +80,8 @@ export function loadConfig(env = process.env) {
   const nvidiaBaseUrl = env.NVIDIA_BASE_URL || DEFAULTS.NVIDIA_BASE_URL;
   const nominatimBaseUrl = env.NOMINATIM_BASE_URL || DEFAULTS.NOMINATIM_BASE_URL;
   const googleGeocodeUrl = env.GOOGLE_GEOCODE_URL || DEFAULTS.GOOGLE_GEOCODE_URL;
+  const mapEnabled = boolFrom(env.MAP_ENABLED, true);
+  const mapTileUrl = env.MAP_TILE_URL || DEFAULTS.MAP_TILE_URL;
   for (const [field, value] of [
     ['NVIDIA_BASE_URL', nvidiaBaseUrl],
     ['NOMINATIM_BASE_URL', nominatimBaseUrl],
@@ -72,6 +89,18 @@ export function loadConfig(env = process.env) {
   ]) {
     if (!HTTPS.test(value)) {
       errors.push({ field, message: `${field} must be an https:// URL; plain HTTP upstreams are refused.` });
+    }
+  }
+
+  // A tile URL is the one remote origin the browser is allowed to touch, so it is
+  // checked as strictly as the geocoding upstreams: https, and a real XYZ template.
+  if (mapEnabled) {
+    if (!HTTPS.test(mapTileUrl)) {
+      errors.push({ field: 'MAP_TILE_URL', message: 'MAP_TILE_URL must be an https:// URL; plain HTTP tile servers are refused.' });
+    }
+    const missing = ['{z}', '{x}', '{y}'].filter((token) => !mapTileUrl.includes(token));
+    if (missing.length) {
+      errors.push({ field: 'MAP_TILE_URL', message: `MAP_TILE_URL must be an XYZ template containing {z}, {x} and {y} (missing ${missing.join(', ')}).` });
     }
   }
 
@@ -126,6 +155,19 @@ export function loadConfig(env = process.env) {
       textLimit: DEFAULTS.AI_TEXT_LIMIT,
       bodyLimit: DEFAULTS.AI_BODY_LIMIT,
       ratePerMinute: intFrom(env.AI_RATE_PER_MIN, DEFAULTS.AI_RATE_PER_MIN)
+    },
+    map: {
+      enabled: mapEnabled,
+      // Only ever one origin, and only the exact one configured here: it is the
+      // single entry added to the Content-Security-Policy for map tiles.
+      tileUrl: mapEnabled ? mapTileUrl : '',
+      tileOrigin: mapEnabled ? tileOriginOf(mapTileUrl) : '',
+      maxZoom: intFrom(env.MAP_MAX_ZOOM, DEFAULTS.MAP_MAX_ZOOM),
+      minZoom: DEFAULTS.MAP_MIN_ZOOM,
+      provider: 'openstreetmap',
+      attribution: '© OpenStreetMap contributors',
+      attributionUrl: 'https://www.openstreetmap.org/copyright',
+      policyUrl: 'https://operations.osmfoundation.org/policies/tiles/'
     },
     geo: {
       provider: geocoderProvider,
@@ -191,6 +233,7 @@ export function describeConfig(result) {
     `mode: ${config.nodeEnv} · port: ${config.port} · trust proxy: ${config.trustProxy ? 'on' : 'off'}`,
     `research assistant: ${config.ai.enabled ? 'model adapter configured' : 'demo adapter (no key configured)'}`,
     `geocoder: ${config.geo.provider} · ${config.geo.enabled ? 'enabled' : 'disabled (missing contact or key)'}`,
+    `map tiles: ${config.map.enabled ? 'openstreetmap (one remote origin, attributed in the interface)' : 'disabled — the stylised placeholder is used'}`,
     `HSTS: ${config.hstsMaxAge > 0 ? 'on' : 'off'} · rate limits: ai ${config.ai.ratePerMinute}/min, geocode ${config.geo.ratePerMinute}/min`
   ];
   for (const warning of warnings) lines.push(`warning: ${warning}`);

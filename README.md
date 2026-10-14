@@ -78,6 +78,9 @@ an error message, or committed.**
 | `GOOGLE_MAPS_API_KEY` | _(unset)_ | Only used when `GEOCODER=google`. Without it the endpoint answers `503 not_configured`. |
 | `AUTHORISED_FEED_URL` / `_KEY` / `_LICENSEE` | _(unset)_ | A partner feed you are licensed to call. Disabled unless all three are set; HTTPS only; redirects refused. |
 | `LICENSED_DATA_DIR` | `./data-imports` | Folder for licensed JSON exports. Not web-served, git-ignored. |
+| `MAP_ENABLED` | `1` | Draw maps with the vendored Leaflet and OpenStreetMap tiles. Set to `0` for no external host at all. |
+| `MAP_TILE_URL` | `https://tile.openstreetmap.org/{z}/{x}/{y}.png` | Must be an HTTPS XYZ template. The one origin here is the only remote entry added to the CSP, and only for images. |
+| `MAP_MAX_ZOOM` | `19` | Highest zoom the tile provider serves. |
 | `TRUST_PROXY` | `0` | Set to `1` only behind a proxy you control, so `X-Forwarded-For` can be trusted for rate limiting. |
 | `HSTS_MAX_AGE` | `0` | When greater than zero, `Strict-Transport-Security` is sent. Leave at 0 unless you serve HTTPS. |
 
@@ -133,6 +136,15 @@ touching the interface.
 Duplicate detection classifies pairs as exact, probable (rent within 2%) or possible
 (within 5%); probable and possible matches are reported and never merged.
 
+### Mapping
+
+Leaflet is vendored into `assets/vendor/leaflet/` and served from this origin, so the
+Content-Security-Policy keeps `script-src 'self'` and `style-src 'self'`. Tiles come from
+the single host in `MAP_TILE_URL`, with attribution always visible and the tile credit
+linking to the licence. The browser is the only place a tile is fetched, and only for the
+area someone is actually looking at. `docs/INTEGRATIONS.md` explains what the map will and
+will not draw, and why there is no "nearby rentals" layer.
+
 ### Photography
 
 Every photograph is a real, openly licensed image of a place — CC0, CC BY, CC BY-SA or
@@ -149,8 +161,11 @@ home* appears with every gallery.
 * Walkability, commute times and fee estimates are illustrative figures computed by this
   prototype from the record's own fields. They are labelled as estimates wherever shown.
 * The currency table is static and dated; it is not a live rate feed.
-* The map view is a stylised layout, not a map. Geocoding exists for real addresses, and
-  every demo record has no coordinates, so no map provider is ever called by this build.
+* The map view is a real OpenStreetMap map, and nothing is plotted on it. Every home here
+  is fictional, so no record carries a checked location — `schema.js` refuses to give a demo
+  record coordinates at all. Filter to one city to see a real map of its centre; the panel
+  says plainly that no home is on it. The moment a record arrives with checked coordinates,
+  the pin appears on the property page, which is covered by a test.
 * The ONS rent benchmark is an area average for the whole private rented stock. It is not
   a price for any home, and it has no bedroom or property-type split. See
   `docs/INTEGRATIONS.md`.

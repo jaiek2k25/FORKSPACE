@@ -12,6 +12,7 @@ import { parseHash, titleForRoute, hrefFor } from './lib/routes.js';
 import { LISTINGS } from './data/listings.js';
 import { api } from './lib/api.js';
 import { icon } from './components/icons.js';
+import { destroyAllMaps } from './lib/map.js';
 import { loadState, subscribe, STORAGE_KEY, storageAvailable } from './lib/store.js';
 import { renderHome } from './views/home.js';
 import { renderSearch } from './views/search.js';
@@ -133,6 +134,10 @@ function renderRoute(route, { announce = false } = {}) {
       if (result && result.ok === false && result.reason) notify(result.reason, 'warn');
     }
   };
+
+  // Leaflet keeps window and document listeners per instance, so every map is
+  // removed before the view that owns it is replaced.
+  destroyAllMaps();
 
   clear(main);
   if (!view) {

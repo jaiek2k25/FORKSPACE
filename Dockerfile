@@ -17,13 +17,15 @@ WORKDIR /app
 COPY package.json package-lock.json ./
 RUN npm ci --omit=dev --no-audit --no-fund && npm cache clean --force
 
-# Only what the server needs. Licensed data, the ONS spreadsheet, tests, tools,
-# documentation sources and any .env stay out of the image (see .dockerignore).
+# Only what the server needs. Licensed data, the ONS spreadsheet, tests, tools and
+# any .env stay out of the image (see .dockerignore).
 COPY index.html package.json ./
 COPY css/ ./css/
 COPY src/ ./src/
 COPY assets/ ./assets/
 COPY server/ ./server/
+# The sources page links to these, and the static handler serves /docs.
+COPY docs/ ./docs/
 
 # The process never needs to write inside the image.
 RUN chown -R node:node /app

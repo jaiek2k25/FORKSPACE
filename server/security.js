@@ -6,20 +6,33 @@
  * requests of any kind. The interface uses the system font stacks, so it renders
  * identically whether or not the machine has internet access.
  */
-const CSP = [
-  "default-src 'self'",
-  "script-src 'self'",
-  "style-src 'self'",
-  "font-src 'self'",
-  "img-src 'self' data:",
-  "connect-src 'self'",
-  "form-action 'none'",
-  "frame-ancestors 'self'",
-  "base-uri 'none'",
-  "object-src 'none'",
-  "manifest-src 'self'",
-  "upgrade-insecure-requests"
-].join('; ');
+/**
+ * The policy allows exactly one remote origin, and only when an operator has
+ * configured map tiles: the single host in `img-src`, for map images. No remote
+ * scripts, styles, fonts, frames or fetches are ever permitted, so a compromised
+ * tile response cannot execute anything in this application.
+ */
+export function contentSecurityPolicy({ tileOrigin = '' } = {}) {
+  const images = ["'self'", 'data:'];
+  if (tileOrigin) images.push(tileOrigin);
+  return [
+    "default-src 'self'",
+    "script-src 'self'",
+    "style-src 'self'",
+    "font-src 'self'",
+    `img-src ${images.join(' ')}`,
+    "connect-src 'self'",
+    "form-action 'none'",
+    "frame-ancestors 'self'",
+    "base-uri 'none'",
+    "object-src 'none'",
+    "manifest-src 'self'",
+    "upgrade-insecure-requests"
+  ].join('; ');
+}
+
+/** The policy with no map tiles configured. */
+const CSP = contentSecurityPolicy();
 
 const PERMISSIONS_POLICY = [
   'accelerometer=()',
@@ -45,11 +58,19 @@ const PERMISSIONS_POLICY = [
  */
 export const CACHE_NO_STORE = 'no-store, no-cache, must-revalidate';
 
-export function securityHeaders({ hstsMaxAge = 0, api = false } = {}) {
+export function securityHeaders({ hstsMaxAge = 0, api = false, tileOrigin = '', document = false } = {}) {
   const headers = {
-    'Content-Security-Policy': CSP,
+    'Content-Security-Policy': contentSecurityPolicy({ tileOrigin }),
     'X-Content-Type-Options': 'nosniff',
-    'Referrer-Policy': 'no-referrer',
+    /**
+     * Documents are the only responses that carry a referrer policy loose enough
+     * to send one. The tile usage policy requires a Referer header on tile
+     * requests, and `strict-origin-when-cross-origin` sends the bare origin and
+     * nothing else: no path, no query, no fragment. Every other response — API
+     * payloads, images, scripts, styles — sends no referrer at all, and when no
+     * map tiles are configured a document sends none either.
+     */
+    'Referrer-Policy': document && tileOrigin ? 'strict-origin-when-cross-origin' : 'no-referrer',
     'Permissions-Policy': PERMISSIONS_POLICY,
     'Cross-Origin-Resource-Policy': 'same-origin',
     'Cross-Origin-Opener-Policy': 'same-origin',

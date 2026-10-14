@@ -2,10 +2,14 @@
  * Search results.
  *
  * The filter state lives in the URL, so a result set can be linked to. Filters
- * update the visible results immediately (no submit button), chips show what is
- * active, and "reset all" clears everything. The map tab is a stylised layout
- * and says so, because demo records have no coordinates and FORKSPACE never
- * calls a map provider for them.
+ * update the visible results immediately (no submit button) and chips show what is
+ * active. "Reset all" clears everything.
+ *
+ * The map tab is a real OpenStreetMap map drawn with a locally served Leaflet.
+ * Nothing is plotted on it, because no record here has a checked location, and the
+ * panel says so rather than leaving a reader to assume the pins are missing by
+ * accident. When an operator narrows to one city the map centres on that city's
+ * approximate centre, also labelled as such.
  */
 import { el, fragment, on, replace } from '../lib/dom.js';
 import { icon } from '../components/icons.js';
@@ -20,6 +24,8 @@ import { CURRENCIES, toInr, FX_RATES_AS_OF } from '../data/fx.js';
 import { formatMoney, formatNumber, pluralise } from '../data/format.js';
 import { STATUS_LABELS } from '../data/schema.js';
 import { loadState, COMPARE_MAX, clearCompared } from '../lib/store.js';
+import { createRentalMap, offlineNote, tileConfig, tileHostOf, OSM_ATTRIBUTION, OSM_ATTRIBUTION_URL } from '../lib/map.js';
+import { cityCentre, CITY_ZOOM, CITY_CENTRE_DISCLOSURE, CITY_CENTRES_DATED } from '../data/city-centres.js';
 
 const RENT_STEPS = [500, 1000, 2500, 5000, 10000, 25000, 50000, 100000, 250000];
 
@@ -42,6 +48,24 @@ export function renderSearch({ route, navigate, data, onStoreChange, notify }) {
   const chipsSlot = el('div', { class: 'search__chips' });
   const resultsSlot = el('div', { class: 'search__results' });
   const compareSlot = el('div', { class: 'compare-bar-slot' });
+
+  /**
+   * The tile URL and the attribution come from the server, so a provider can be
+   * switched from configuration without shipping new client code. Until the
+   * answer arrives the map tab shows its written explanation.
+   */
+  let mapTiles = null;
+  let mapTilesRequested = false;
+  function ensureMapConfig() {
+    if (mapTilesRequested) return;
+    mapTilesRequested = true;
+    // Failing closed: without a confirmed tile origin and credit, no remote request
+    // is made at all, and the panel says why.
+    tileConfig().then((config) => {
+      mapTiles = config;
+      if (view === 'map' && root.isConnected) renderAll();
+    });
+  }
 
   function syncUrl() {
     const params = filtersToParams(filters, sort);
@@ -298,40 +322,82 @@ export function renderSearch({ route, navigate, data, onStoreChange, notify }) {
     );
   }
 
-  /* --- map placeholder ---------------------------------------------------- */
+  /* --- map ---------------------------------------------------------------- */
 
-  function buildMapPlaceholder(results) {
-    // Deterministic pseudo-positions so the layout is stable and obviously not real.
-    const pins = results.map((listing, index) => {
-      const column = index % 4;
-      const row = Math.floor(index / 4) % 3;
-      return el('a', {
-        class: 'map__pin',
-        href: `#/property/${listing.id}`,
-        style: { left: `${8 + column * 23 + (row % 2) * 4}%`, top: `${12 + row * 27 + (column % 2) * 5}%` },
-        title: `${listing.title} — ${listing.city}`
-      },
-        icon('pin', 16),
-        el('span', { class: 'map__pin-label' }, listing.city)
-      );
-    });
+  /**
+   * A real map, with a real credit, and nothing plotted on it.
+   *
+   * The pin layer is deliberately empty rather than filled with invented
+   * positions: no record here has a checked location, and a plausible-looking dot
+   * on a real street would be a claim about the world that this dataset cannot
+   * support. The explanation is part of the component, not a footnote.
+   */
+  function buildMap(results) {
+    const cityIds = filters.cities || [];
+    const single = cityIds.length === 1 ? cityIds[0] : null;
+    const centre = single ? cityCentre(single) : null;
+    const city = single ? CITIES.find((entry) => entry.id === single) : null;
+    const canDraw = Boolean(mapTiles?.enabled && centre);
 
-    return el('div', { class: 'map-placeholder' },
-      el('div', {
-      class: 'map-placeholder__canvas',
-      role: 'group',
-      'aria-label': 'Stylised placement of results. Not a live map, and no listing has coordinates.',
-      'aria-describedby': 'map-disclaimer'
-    },
-        el('div', { class: 'map-placeholder__grid', 'aria-hidden': 'true' }),
-        ...pins
-      ),
-      el('div', { class: 'map-placeholder__note', id: 'map-disclaimer' },
-        el('p', { class: 'map-placeholder__title' }, 'Stylised layout — not a live map'),
-        el('p', null, 'Demo records carry no coordinates and no verified address, so no map provider is called. Maps apply only to real listing addresses, and FORKSPACE never scrapes a map service.'),
-        el('p', { class: 'map-placeholder__attribution' }, 'When the geocoder is enabled, results are attributed “© OpenStreetMap contributors (ODbL)”.')
-      )
+    const canvas = el('div', { class: 'map-frame__canvas' });
+    const warningSlot = el('div');
+    const credit = el('p', { class: 'map-frame__credit' },
+      'Map data ',
+      el('a', { href: mapTiles?.attributionUrl || OSM_ATTRIBUTION_URL, target: '_blank', rel: 'noopener' }, mapTiles?.attribution || OSM_ATTRIBUTION),
+      single ? ` · City centre from a static table dated ${CITY_CENTRES_DATED}.` : ''
     );
+
+    if (canDraw) {
+      // Built after the element is in the document, so Leaflet can measure it.
+      window.requestAnimationFrame(() => {
+        createRentalMap(canvas, {
+          center: centre,
+          zoom: CITY_ZOOM,
+          marker: null,
+          tiles: mapTiles,
+          onTilesUnavailable: () => {
+            if (warningSlot.isConnected && !warningSlot.firstChild) {
+              warningSlot.append(offlineNote(tileHostOf(mapTiles.tileUrl)));
+            }
+          }
+        }).then((map) => {
+          if (map || !canvas.isConnected) return;
+          warningSlot.append(offlineNote(tileHostOf(mapTiles.tileUrl)));
+        });
+      });
+    }
+
+    const panel = el('div', { class: 'map-frame' },
+      canDraw
+        ? el('div', { class: 'map-frame__body' },
+            canvas,
+            el('div', { class: 'map-frame__foot' },
+              el('h2', { class: 'map-frame__title' }, `Map of ${city?.name || single} · nothing plotted`),
+              el('p', null, 'This is a real map of the city centre. No home in this dataset carries a checked location, so no home is plotted on it — the pin layer is empty on purpose, not by accident.'),
+              el('p', { class: 'map-frame__small' }, CITY_CENTRE_DISCLOSURE),
+              credit
+            )
+          )
+        : el('div', { class: 'map-placeholder' },
+            el('div', { class: 'map-placeholder__note', id: 'map-disclaimer' },
+              el('p', { class: 'map-placeholder__title' }, mapTiles && !mapTiles.enabled
+                ? (mapTiles.unreachable ? 'The map configuration could not be confirmed' : 'Map tiles are switched off on this server')
+                : 'Choose one city to see a map'),
+              el('p', null, mapTiles && !mapTiles.enabled
+                ? (mapTiles.unreachable
+                  ? 'Without a confirmed tile provider and credit, no map is drawn and no remote request is made. Nothing else on this page is affected.'
+                  : 'The server is running without a tile provider, so no map is drawn and no remote request is made. Every number on this page is unaffected.')
+                : 'Demo records carry no coordinates and no verified address, and this prototype never invents them. Pick a single city in the filters to see a real map of its centre — still with nothing plotted on it.'),
+              el('p', null, 'Maps apply only to real listing addresses, and FORKSPACE never scrapes a map service.')
+            )
+          ),
+      warningSlot,
+      el('p', { class: 'footnote' }, results.length > 0
+        ? `${pluralise(results.length, 'home')} in this result set. None of them carries a checked location, so none is plotted.`
+        : 'No homes match the current filters.')
+    );
+
+    return panel;
   }
 
   /* --- states ------------------------------------------------------------ */
@@ -411,13 +477,14 @@ export function renderSearch({ route, navigate, data, onStoreChange, notify }) {
       : sortListings(filtered.results, sort);
 
     if (view === 'map') {
-      const map = buildMapPlaceholder(results);
+      ensureMapConfig();
+      const map = buildMap(results);
       const list = el('div', { class: 'results-grid' }, ...results.map((listing) => listingCard(listing, {
         displayCurrency: filters.displayCurrency === 'INR' ? null : filters.displayCurrency,
         compareCount: state.compared.length,
         onStoreChange: handleStoreChange
       })));
-      return fragment(el('p', { class: 'results__count' }, `${pluralise(results.length, 'home')} plotted.`), map, el('h2', { class: 'section__subtitle' }, 'The same homes, as a list'), list);
+      return fragment(el('p', { class: 'results__count' }, `${pluralise(results.length, 'home')} · map view`), map, el('h2', { class: 'section__subtitle' }, 'The same homes, as a list'), list);
     }
 
     const anyFilter = activeChips(filters).length > 0;

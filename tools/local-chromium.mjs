@@ -10,6 +10,13 @@
  * Step 3 exists because some sandboxes can reach the npm registry but not the
  * Playwright browser CDN. It is a developer/tooling convenience only and is
  * never referenced by the application or by production code.
+ *
+ * `@sparticuz/chromium` is declared in devDependencies rather than installed by
+ * hand, because an undeclared package is pruned by the next `npm install` and the
+ * browser suite then fails with a bare "executable doesn't exist". It is a dev
+ * dependency, so the production image and the Docker build never see it, and
+ * anyone who prefers the normal route can still run `npx playwright install
+ * chromium` and step 2 above will find it first.
  */
 import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, rmSync } from 'node:fs';
 import { execFileSync } from 'node:child_process';

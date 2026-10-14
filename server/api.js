@@ -189,7 +189,26 @@ async function handleAiExtract(ctx) {
 }
 
 function handleGeoStatus(ctx) {
-  sendJson(ctx.res, 200, ctx.geocoder.status(), apiHeaders(ctx.config));
+  const { map } = ctx.config;
+  sendJson(ctx.res, 200, {
+    ...ctx.geocoder.status(),
+    /**
+     * Map settings for the browser. The tile URL is served rather than compiled
+     * into the client so an operator can switch provider from configuration alone,
+     * without waiting for a software update — which the tile usage policy asks for.
+     */
+    map: {
+      enabled: Boolean(map?.enabled),
+      provider: map?.provider || 'openstreetmap',
+      tileUrl: map?.enabled ? map.tileUrl : '',
+      attribution: map?.attribution || '',
+      attributionUrl: map?.attributionUrl || '',
+      policyUrl: map?.policyUrl || '',
+      minZoom: map?.minZoom ?? 3,
+      maxZoom: map?.maxZoom ?? 19,
+      plots: 'Only records that carry a verified location are plotted. The demo records carry none.'
+    }
+  }, apiHeaders(ctx.config));
 }
 
 async function handleGeocode(ctx) {

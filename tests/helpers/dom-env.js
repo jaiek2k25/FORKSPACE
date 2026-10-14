@@ -146,7 +146,7 @@ export function createBrowser({ fetchImpl } = {}) {
 }
 
 /** A fetch stand-in that answers the FORKSPACE API shapes the views expect. */
-export function apiStub({ aiStatus, listings } = {}) {
+export function apiStub({ aiStatus, listings, mapStatus } = {}) {
   return async (path) => {
     const url = String(path);
     const json = (payload, status = 200) => ({
@@ -164,6 +164,26 @@ export function apiStub({ aiStatus, listings } = {}) {
         textLimit: 1000,
         disclosure: 'No model key is configured, so a deterministic demo reader extracts preferences from your words.',
         warning: 'Demo adapter: no language model is involved and no internet search happens.'
+      });
+    }
+    if (url.endsWith('/api/geo/status')) {
+      // The shape the real server returns, so a view that depends on the map
+      // configuration is exercised rather than silently falling back.
+      return json(mapStatus || {
+        provider: 'nominatim',
+        enabled: false,
+        reason: 'missing_contact',
+        map: {
+          enabled: true,
+          provider: 'openstreetmap',
+          tileUrl: 'https://tile.openstreetmap.org/{z}/{x}/{y}.png',
+          attribution: '© OpenStreetMap contributors',
+          attributionUrl: 'https://www.openstreetmap.org/copyright',
+          policyUrl: 'https://operations.osmfoundation.org/policies/tiles/',
+          minZoom: 3,
+          maxZoom: 19,
+          plots: 'Only records that carry a verified location are plotted. The demo records carry none.'
+        }
       });
     }
     if (url.endsWith('/api/listings') && listings) {

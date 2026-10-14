@@ -19,6 +19,8 @@ import { isChecked, setChecked, isSaved, toggleSaved, isCompared, toggleCompared
 import { benchmarkById } from '../data/benchmarks.js';
 import { freshnessOf } from '../lib/freshness.js';
 import { STATUS_LABELS } from '../data/schema.js';
+import { api } from '../lib/api.js';
+import { createRentalMap, locationOf, locationSourceLine, offlineNote, tileConfig, tileHostOf, OSM_ATTRIBUTION, OSM_ATTRIBUTION_URL } from '../lib/map.js';
 
 function specRow(label, value) {
   return el('div', { class: 'spec' },
@@ -88,6 +90,86 @@ function moneyTable(breakdown, format) {
     )
   );
   return table;
+}
+
+/**
+ * Where the home is.
+ *
+ * Two honest outcomes, and no third one. If the record carries checked
+ * coordinates, a real OpenStreetMap map is drawn with its credit and the source of
+ * the coordinates. If it does not — as with every record in this dataset — the
+ * panel says why there is no map instead of drawing an empty one or, worse, a
+ * plausible-looking dot. A fictional home is never plotted on a real street.
+ */
+function locationBlock(listing) {
+  const location = locationOf(listing);
+  const shell = el('div', { class: 'map-frame__shell' });
+
+  if (!location) {
+    return el('section', { class: 'panel' },
+      el('h2', { class: 'panel__title' }, 'Where it is'),
+      el('p', { class: 'panel__text' }, listing.area || listing.city
+        ? `Neighbourhood: ${listing.area}, ${listing.city}. Street-level coordinates are not part of this record, so there is no map to show.`
+        : 'This record has no neighbourhood or coordinates recorded.'),
+      el('ul', { class: 'bullet-list' },
+        el('li', null, 'The demo records here carry invented addresses. A pin on a real map would be a claim about the world that this dataset cannot support, so none is drawn.'),
+        el('li', null, 'Coordinates arrive with licensed or authorised listing data, and the schema refuses to accept them without a source and a date.'),
+        el('li', null, 'No map service is ever scraped, and no location is ever estimated from a postcode or a neighbourhood name.')
+      ),
+      el('p', { class: 'footnote' }, 'Commute and walkability figures on this page are illustrative estimates computed from the record itself, never from a map provider.')
+    );
+  }
+
+  const credit = el('p', { class: 'map-frame__credit' },
+    'Map data ',
+    el('a', { href: OSM_ATTRIBUTION_URL, target: '_blank', rel: 'noopener' }, OSM_ATTRIBUTION)
+  );
+
+  return el('section', { class: 'panel' },
+    el('h2', { class: 'panel__title' }, 'Where it is'),
+    el('p', { class: 'panel__text' }, `${listing.area}, ${listing.city}. ${locationSourceLine(location)}`),
+    shell,
+    location.note ? el('p', { class: 'footnote' }, location.note) : null,
+    el('p', { class: 'footnote' }, 'The pin marks the home\'s own coordinates. Nearby properties are never listed here, because this prototype holds no other records for this address.'),
+    credit
+  );
+}
+
+/**
+ * Built after the panel is in the document, so Leaflet can measure the element,
+ * and only once the server has confirmed where tiles come from and what credit
+ * they carry. Without both, no map and no remote request.
+ */
+function mountLocationMap(shell, listing) {
+  const location = locationOf(listing);
+  if (!location || !shell.isConnected) return;
+  const canvas = el('div', { class: 'map-frame__canvas' });
+  shell.append(canvas);
+  tileConfig().then((tiles) => {
+    if (!canvas.isConnected) return;
+    if (!tiles?.enabled) {
+      canvas.append(el('p', { class: 'map-frame__warning', role: 'status' },
+        tiles?.unreachable
+          ? 'The tile provider could not be confirmed with the server, so no map is drawn and no remote request is made. The coordinates above are still shown.'
+          : 'Map tiles are switched off on this server, so the coordinates are shown as text instead of a map.'));
+      return;
+    }
+    const warn = () => {
+      if (canvas.isConnected && !shell.querySelector('.map-frame__warning')) {
+        shell.append(offlineNote(tileHostOf(tiles.tileUrl)));
+      }
+    };
+    return createRentalMap(canvas, {
+      center: location,
+      zoom: 16,
+      marker: { lat: location.lat, lng: location.lng, label: listing.title },
+      tiles,
+      onTilesUnavailable: warn
+    }).then((map) => {
+      if (map || !canvas.isConnected) return;
+      warn();
+    });
+  });
 }
 
 function benchmarkBlock(listing) {
@@ -452,6 +534,7 @@ export function renderProperty({ route, navigate, data, onStoreChange, notify })
             listing.neighbourhood?.note ? el('p', { class: 'footnote' }, listing.neighbourhood.note) : null
           )
         ),
+        locationBlock(listing),
         benchmarkBlock(listing),
         listBlock('What works well', listing.pros, 'panel--pros'),
         listBlock('Trade-offs', listing.tradeoffs, 'panel--cons'),
@@ -481,6 +564,15 @@ export function renderProperty({ route, navigate, data, onStoreChange, notify })
       )
     )
   );
+
+  /**
+   * The map is mounted after the page is returned, once it is in the document and
+   * measurable. `requestAnimationFrame` would run before the router appends the
+   * page, so the mount waits for that turn to finish.
+   */
+  window.setTimeout(() => {
+    mountLocationMap(page.querySelector('.map-frame__shell') || el('div'), listing);
+  }, 0);
 
   return page;
 }

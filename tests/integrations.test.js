@@ -82,6 +82,36 @@ test('schema: a demo record may not carry a source URL or a verification timesta
   assert.equal(withTimestamp.ok, false);
 });
 
+test('schema: a plotted location must be checked, sourced, and never fictional', () => {
+  const good = validateListing(licensedRecord({
+    coordinates: { lat: 38.7355, lng: -9.1356, source: 'partner feed geocoding', checkedAt: '2026-10-01T00:00:00Z' }
+  }));
+  assert.equal(good.ok, true, good.errors.join('; '));
+
+  // Out of range, either axis.
+  assert.match(validateListing(licensedRecord({ coordinates: { lat: 91, lng: 0, source: 'partner', checkedAt: '2026-10-01' } })).errors.join(' '), /coordinates\.lat/);
+  assert.match(validateListing(licensedRecord({ coordinates: { lat: 0, lng: 181, source: 'partner', checkedAt: '2026-10-01' } })).errors.join(' '), /coordinates\.lng/);
+  assert.match(validateListing(licensedRecord({ coordinates: { lat: Number.NaN, lng: 0, source: 'partner', checkedAt: '2026-10-01' } })).errors.join(' '), /coordinates\.lat/);
+
+  // A pin with no provenance, or no date, is an unverifiable claim.
+  assert.match(validateListing(licensedRecord({ coordinates: { lat: 1, lng: 2 } })).errors.join(' '), /coordinates\.source is required/);
+  assert.match(validateListing(licensedRecord({ coordinates: { lat: 1, lng: 2, source: 'partner feed' } })).errors.join(' '), /coordinates\.checkedAt/);
+  assert.match(validateListing(licensedRecord({ coordinates: { lat: 1, lng: 2, source: 'partner feed', checkedAt: 'not a date' } })).errors.join(' '), /coordinates\.checkedAt/);
+
+  // No coordinates at all is perfectly valid: most records legitimately have none.
+  assert.equal(validateListing(licensedRecord()).ok, true);
+
+  // The rule that matters most: a fictional home is never plotted on a real map.
+  const demo = LISTINGS[0];
+  const plotted = validateListing({
+    ...demo,
+    coordinates: { lat: 51.5, lng: -0.12, source: 'invented', checkedAt: '2026-10-01' }
+  });
+  assert.equal(plotted.ok, false);
+  assert.match(plotted.errors.join(' '), /demo records must not carry coordinates/);
+  assert.equal(LISTINGS.some((listing) => listing.coordinates), false, 'no demo record may carry coordinates');
+});
+
 test('schema: an unknown rent must not carry an amount and a known rent must', () => {
   assert.equal(validateListing(licensedRecord({ rent: { amount: 100, currency: 'EUR', kind: 'unknown' } })).ok, true);
   assert.equal(validateListing(licensedRecord({ rent: { amount: null, currency: 'EUR', kind: 'known' } })).ok, false);

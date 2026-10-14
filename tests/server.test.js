@@ -223,12 +223,87 @@ test('every response carries the security headers, and API responses are not cac
     assert.match(csp, /script-src 'self'/);
     assert.ok(!csp.includes('unsafe-inline'), `${path} allows inline script`);
     assert.equal(response.headers.get('x-content-type-options'), 'nosniff');
-    assert.equal(response.headers.get('referrer-policy'), 'no-referrer');
     assert.match(response.headers.get('permissions-policy'), /camera=\(\)/);
     assert.equal(response.headers.get('strict-transport-security'), null, 'HSTS is off unless HSTS_MAX_AGE is set');
     if (path.startsWith('/api')) {
       assert.equal(response.headers.get('cache-control'), 'no-store, no-cache, must-revalidate', `${path} must not be cached`);
     }
+    /**
+     * The shell is the only document, and the tile usage policy requires a Referer
+     * on tile requests, so the shell is the only response allowed to send one.
+     */
+    if (path === '/') {
+      assert.equal(response.headers.get('referrer-policy'), 'strict-origin-when-cross-origin', 'the shell must send an origin-only referrer so map tiles may be loaded');
+    } else {
+      assert.equal(response.headers.get('referrer-policy'), 'no-referrer', `${path} must not send a referrer`);
+    }
+  }
+});
+
+test('csp: map tiles add exactly one remote origin, and only images may come from it', async () => {
+  const { response } = await get('/');
+  const csp = response.headers.get('content-security-policy');
+  const directives = Object.fromEntries(csp.split('; ').map((part) => {
+    const [name, ...values] = part.split(' ');
+    return [name, values];
+  }));
+
+  assert.deepEqual(directives['img-src'], ["'self'", 'data:', 'https://tile.openstreetmap.org']);
+  // Nothing else may be remote: scripts, styles, fonts, connections and frames all stay local.
+  for (const directive of ['script-src', 'style-src', 'font-src', 'connect-src', 'default-src']) {
+    assert.deepEqual(directives[directive], ["'self'"], `${directive} must not allow a remote origin`);
+  }
+  assert.equal(csp.includes('http://'), false, 'no plain-HTTP origin may be allowed');
+  assert.equal((csp.match(/https:\/\//g) || []).length, 1, 'exactly one remote origin is allowed, for map images');
+
+  const frameAncestors = directives['frame-ancestors'];
+  assert.deepEqual(frameAncestors, ["'self'"]);
+});
+
+test('geo status: the map configuration is served, so tiles can be switched without a redeploy', async () => {
+  const { response, json: data } = await get('/api/geo/status');
+  assert.equal(response.status, 200);
+  assert.equal(data.map.enabled, true);
+  assert.equal(data.map.provider, 'openstreetmap');
+  assert.equal(data.map.tileUrl, 'https://tile.openstreetmap.org/{z}/{x}/{y}.png');
+  assert.match(data.map.attribution, /OpenStreetMap contributors/);
+  assert.match(data.map.attributionUrl, /openstreetmap\.org\/copyright/);
+  assert.match(data.map.policyUrl, /policies\/tiles/);
+  assert.equal(data.map.minZoom, 3);
+  assert.equal(data.map.maxZoom, 19);
+  assert.match(data.map.plots, /only records that carry a verified location/i);
+  assert.equal(JSON.stringify(data).includes('tile.openstreetmap.org/{z}'), true, 'the URL is a template, not a fixed tile');
+});
+
+test('map tiles: disabled by configuration, and a bad tile URL refuses to start', async () => {
+  const disabled = loadConfig({ PORT: '5199', MAP_ENABLED: '0' });
+  assert.equal(disabled.config.map.enabled, false);
+  assert.equal(disabled.config.map.tileOrigin, '');
+
+  const app = createApp(disabled.config);
+  await new Promise((resolve) => app.server.listen(0, '127.0.0.1', resolve));
+  const port = app.server.address().port;
+  try {
+    const csp = (await fetch(`http://127.0.0.1:${port}/`)).headers.get('content-security-policy');
+    assert.match(csp, /img-src 'self' data:(;|$)/);
+    assert.equal(csp.includes('tile.openstreetmap.org'), false, 'a disabled map must not widen the policy');
+    const shell = await fetch(`http://127.0.0.1:${port}/`);
+    assert.equal(shell.headers.get('referrer-policy'), 'no-referrer', 'no tiles means no referrer, even for the shell');
+    const geo = await (await fetch(`http://127.0.0.1:${port}/api/geo/status`)).json();
+    assert.equal(geo.map.enabled, false);
+    assert.equal(geo.map.tileUrl, '');
+  } finally {
+    await new Promise((resolve) => app.server.close(resolve));
+  }
+
+  for (const bad of [
+    { MAP_TILE_URL: 'http://tile.openstreetmap.org/{z}/{x}/{y}.png' },
+    { MAP_TILE_URL: 'https://tiles.example.com/all.png' }
+  ]) {
+    const result = loadConfig({ PORT: '5199', ...bad });
+    assert.equal(result.errors.length > 0, true, `${JSON.stringify(bad)} must be refused`);
+    assert.equal(result.errors[0].field, 'MAP_TILE_URL');
+    assert.equal(JSON.stringify(result.errors).includes(bad.MAP_TILE_URL), false, 'the error must not echo the configured value');
   }
 });
 

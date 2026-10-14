@@ -5,6 +5,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 
 import { LISTINGS } from '../assets/js/data/listings.js';
+import { locationOf, hasLocation, locationSourceLine } from '../assets/js/lib/map.js';
+import { cityCentre, CITY_CENTRE_DISCLOSURE, CITY_CENTRES_DATED } from '../assets/js/data/city-centres.js';
 import {
   DEFAULT_FILTERS, filterListings, sortListings, sortByRelevance, relevanceScore,
   activeChips, filtersToParams, parseFilters, rentInInr, displayBudget, budgetNote, hardLimitFailures
@@ -131,6 +133,59 @@ test('sort: beds, city and relevance are deterministic', () => {
   assert.deepEqual([...byCity].sort((a, b) => a.localeCompare(b)), byCity);
   const relevant = sortByRelevance(LISTINGS, 'furnished walkable');
   assert.ok(relevant[0].relevance >= relevant[relevant.length - 1].relevance);
+});
+
+test('maps: a location is only used when it is checked, sourced and not fictional', () => {
+  const real = { id: 'r-1', provenance: { isDemo: false }, coordinates: { lat: 52.4875, lng: 13.4244, source: 'partner feed geocoding', checkedAt: '2026-10-01T00:00:00Z' } };
+  assert.equal(hasLocation(real), true);
+  assert.deepEqual(
+    { lat: locationOf(real).lat, lng: locationOf(real).lng, source: locationOf(real).source },
+    { lat: 52.4875, lng: 13.4244, source: 'partner feed geocoding' }
+  );
+  assert.match(locationSourceLine(locationOf(real)), /supplied by partner feed geocoding, checked 1 October 2026/);
+
+  // Every one of these must fail closed, even if a record reaches the view by a route
+  // that skipped validation.
+  const rejected = [
+    { ...real, provenance: { isDemo: true } },                                   // fictional
+    { ...real, coordinates: { ...real.coordinates, lat: 95 } },                  // out of range
+    { ...real, coordinates: { ...real.coordinates, lng: -181 } },                // out of range
+    { ...real, coordinates: { ...real.coordinates, lat: '52.4' } },              // not a number
+    { ...real, coordinates: { ...real.coordinates, source: undefined } },        // no provenance
+    { ...real, coordinates: { ...real.coordinates, checkedAt: undefined } },     // no date
+    { ...real, coordinates: null },
+    { ...real, coordinates: undefined },
+    {}
+  ];
+  for (const listing of rejected) {
+    assert.equal(locationOf(listing), null, `${JSON.stringify(listing.coordinates)} must not be plotted`);
+    assert.equal(hasLocation(listing), false);
+  }
+
+  // The demo dataset is entirely unplottable, which is the point.
+  assert.equal(LISTINGS.some(hasLocation), false);
+
+  // Empty text rather than a broken sentence.
+  assert.equal(locationSourceLine(null), '');
+});
+
+test('maps: every city in the dataset has a plotted centre, and none claims precision', () => {
+  const cityIds = [...new Set(LISTINGS.map((listing) => listing.cityId))];
+  assert.ok(cityIds.length >= 12);
+  for (const id of cityIds) {
+    const centre = cityCentre(id);
+    assert.ok(centre, `${id} needs a centre so the map view never falls back silently`);
+    assert.ok(centre.lat >= -90 && centre.lat <= 90, `${id} lat`);
+    assert.ok(centre.lng >= -180 && centre.lng <= 180, `${id} lng`);
+    // Rounded to three decimals: a map centre is not a survey.
+    for (const value of [centre.lat, centre.lng]) {
+      assert.equal(Math.abs(value * 1000 - Math.round(value * 1000)) < 1e-9, true, `${id} must stay rounded`);
+    }
+    assert.ok(typeof centre.name === 'string' && centre.name.length > 2, `${id} names the part of town`);
+  }
+  assert.equal(cityCentre('reykjavik'), null, 'an unknown city has no centre and no map');
+  assert.match(CITY_CENTRE_DISCLOSURE, /not the location of any home/);
+  assert.equal(CITY_CENTRES_DATED, '2026-10-14', 'the table carries the date it was recorded');
 });
 
 test('sort: a home that is gone never sorts above a live one on equal footing', () => {

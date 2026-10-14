@@ -68,7 +68,57 @@ For a partner API you have **written permission** to call, with an access token.
 | Failure | Degrades to no records plus a fixed status token (`upstream_http_500`, `upstream_timeout`, `upstream_unreachable`). An upstream message is never passed through, because it can echo the token back. |
 | Key exposure | The key never appears in a response, a log line, an error message or the browser. |
 
-## 4. Geocoding
+## 4. Map tiles and Leaflet
+
+The map is the only place where the browser is allowed to touch a host that is not ours,
+and it is deliberately narrow.
+
+| Piece | Where it comes from |
+| --- | --- |
+| Leaflet 1.9.4 | Vendored into `assets/vendor/leaflet/`, served from this origin. BSD-2-Clause, licence text kept beside it. No CDN, no third-party script or style. |
+| Tiles | `MAP_TILE_URL`, default `https://tile.openstreetmap.org/{z}/{x}/{y}.png` — the exact URL the tile policy requires. |
+| Attribution | Always rendered, in Leaflet's own control, with Leaflet's control left switched on and never hidden behind a toggle. |
+| Content-Security-Policy | `img-src` gains that one origin and nothing else. `script-src`, `style-src`, `font-src` and `connect-src` stay `'self'`. |
+| Referrer-Policy | `no-referrer` everywhere **except** the app shell, which sends `strict-origin-when-cross-origin` — the bare origin and no path, which the tile policy requires. |
+
+The tile URL is served to the browser by `GET /api/geo/status` rather than compiled in, so
+an operator can switch provider from configuration alone without waiting for a new client
+build — which the policy asks for. If that call fails, the client fails closed: no tile
+URL, no map, no remote request.
+
+**What it never does**
+
+* **No Overpass, and no "nearby rentals" layer.** `building=apartments` and
+  `building:use=residential` describe building types, not lettings. Drawing those as
+  nearby rental homes would assert something the data does not say. Nearby homes can only
+  ever come from *our own* licensed records that carry real coordinates.
+* **No prefetching, no offline download, no tile archiving.** Tiles are requested only for
+  the viewport someone is looking at, and the browser's own cache handles revisits.
+* **No reverse geocoding to guess an address**, and no map request for a fictional record.
+
+### What is plotted, and what is not
+
+Only a record carrying a checked location is plotted. That is enforced in three places:
+
+1. `assets/js/data/schema.js` rejects `coordinates` that are out of range, missing a
+   `source`, missing a `checkedAt`, or attached to a record with `provenance.isDemo: true`.
+2. `assets/js/lib/map.js` re-checks the same conditions before handing anything to Leaflet.
+3. The server's own `/api/geo/status` states the rule in the payload that the client reads.
+
+Every record in this repository is fictional, so **nothing is plotted on any map in this
+build.** The map view centres on the city you filter to — from a static, dated table of
+approximate city centres — and says in the panel that no home is on it. The property page
+shows its written explanation instead of an empty canvas. Both paths are exercised by
+tests, including a fixture that proves the pin appears the moment a record has real
+coordinates.
+
+If you are running this at any volume, the tile policy's expectation is that you
+self-host or use a commercial provider rather than relying on the OSM Foundation's
+donated servers. Set `MAP_TILE_URL` to your provider's XYZ template, check their terms on
+caching and attribution, and leave `MAP_ENABLED=0` if you would rather ship the map view
+with no external host at all — everything else in the interface is unaffected.
+
+## 5. Geocoding
 
 Geocoding exists for **real listing addresses**. Every demo record has no coordinates and
 no verified address, so this build never geocodes a home and the interface says so.
@@ -101,7 +151,7 @@ reaches the browser. Results are cached for 30 days to limit both cost and calls
 Set `GEOCODER=none`. The endpoint answers `503 geocoder_disabled`. The map view still
 works, because it is a stylised layout and not a map.
 
-## 5. Research assistant
+## 6. Research assistant
 
 Two adapters, one contract: the model produces **preferences only**. All matching,
 scoring, cost arithmetic and wording is computed in `assets/js/lib/research.js`, in code,
@@ -123,7 +173,7 @@ report says so and falls back to the deterministic reader.
 Models known to be unavailable on this endpoint are listed in `server/ai.js` and are never
 selected; the retired chat model is explicitly blocked.
 
-## 6. ONS Price Index of Private Rents (optional)
+## 7. ONS Price Index of Private Rents (optional)
 
 Where loaded, the Office for National Statistics' private rent index is shown on London
 property pages and in research results that mention London, labelled **Area benchmark ·
@@ -141,7 +191,7 @@ official statistics**.
 * **If it is absent:** the interface says the official statistics file is not loaded rather
   than showing a figure of unknown provenance.
 
-## 7. Photography
+## 8. Photography
 
 Every image in `assets/photos/` is a real, openly licensed photograph of a place, used
 under CC0, CC BY, CC BY-SA or public domain. No non-commercial and no no-derivatives
@@ -149,7 +199,7 @@ material is included. Photographer, licence and file page are recorded per image
 `assets/js/data/photos.js`, and every gallery carries the caption *Illustrative photos ·
 not of this specific home*. No photograph shows any home in the dataset.
 
-## 8. Currency
+## 9. Currency
 
 `assets/js/data/fx.js` holds a static, dated, illustrative table. It is not a live rate
 feed, it is labelled as such wherever it is used, and budgets are stored in INR and
@@ -163,4 +213,5 @@ inventing a rate.
 * A map service, by scraping.
 * Anything that requires a key it does not have.
 * Any third-party script, font, analytics or tracking pixel: the browser loads only this
-  application's own files, and the Content-Security-Policy enforces that.
+  application's own files, and the Content-Security-Policy enforces that. Map tiles are the
+  single, explicitly configured exception, and they are images only.

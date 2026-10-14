@@ -284,16 +284,133 @@ test.describe('interactions', () => {
     }
   });
 
-  test('the map view says it is not a live map, and no third-party request is made', async ({ page }) => {
+  test('a map is drawn for one city, with the credit visible and nothing plotted', async ({ page }) => {
     const external = [];
     page.on('request', (request) => {
       const url = request.url();
       if (!url.startsWith('http://127.0.0.1:')) external.push(url);
     });
-    await openRoute(page, '#/search?view=map');
-    await expect(page.locator('.map-placeholder')).toContainText('not a live map');
-    // Nothing at all may be requested from a third party, fonts included.
+
+    await openRoute(page, '#/search?view=map&cities=tokyo');
+
+    // A real map, from the locally served Leaflet, centred on a real city centre.
+    // Leaflet adds .leaflet-container to the element it is given, so the canvas is the container.
+    await expect(page.locator('.map-frame__canvas.leaflet-container')).toBeVisible();
+    await expect(page.locator('.map-frame__title')).toHaveText(/Map of Tokyo · nothing plotted/);
+    await expect(page.locator('.map-frame')).toContainText('no home is plotted on it');
+
+    // Attribution is on screen, not behind a toggle: the data requires it.
+    const credit = page.locator('.leaflet-control-attribution');
+    await expect(credit).toBeVisible();
+    await expect(credit).toContainText('OpenStreetMap');
+    // The credit links to the licence itself, not to a bare homepage.
+    await expect(credit.locator('a[href*="openstreetmap.org/copyright"]')).toBeVisible();
+    // Leaflet's own credit sits next to ours and is left in place.
+    await expect(credit.locator('a[href*="leafletjs.com"]')).toBeVisible();
+
+    // No fictional home is ever plotted, so there is no pin.
+    expect(await page.locator('.map-pin').count()).toBe(0);
+
+    // The only remote requests allowed in the whole application are map tiles,
+    // and only to the one configured host.
+    for (const url of external) {
+      expect(url, `unexpected third-party request: ${url}`).toMatch(/^https:\/\/tile\.openstreetmap\.org\//);
+    }
+  });
+
+  test('map tiles are only ever requested from the configured host, in the right shape', async ({ page }) => {
+    const tiles = [];
+    page.on('request', (request) => {
+      const url = request.url();
+      if (!url.startsWith('http://127.0.0.1:')) tiles.push(url);
+    });
+    await openRoute(page, '#/search?view=map&cities=lisbon');
+    await page.waitForSelector('.map-frame__canvas.leaflet-container');
+    await page.waitForTimeout(1200);
+
+    expect(tiles.length).toBeGreaterThan(0);
+    for (const url of tiles) {
+      // The exact XYZ form the tile usage policy requires, at a real zoom level.
+      expect(url).toMatch(/^https:\/\/tile\.openstreetmap\.org\/\d{1,2}\/\d+\/\d+\.png$/);
+    }
+    // One host only, and a viewport's worth of tiles, not a download.
+    expect(new Set(tiles.map((url) => new URL(url).origin))).toEqual(new Set(['https://tile.openstreetmap.org']));
+    expect(tiles.length).toBeLessThanOrEqual(40);
+  });
+
+  test('tiles that cannot be reached are explained, and the credit stays visible', async ({ page }) => {
+    // Deterministic in any environment: the tile host is made unreachable.
+    await page.route('https://tile.openstreetmap.org/**', (route) => route.abort());
+    await openRoute(page, '#/search?view=map&cities=berlin');
+    await page.waitForSelector('.map-frame__canvas.leaflet-container');
+    const warning = page.locator('.map-frame__warning');
+    await expect(warning).toBeVisible({ timeout: 15000 });
+    await expect(warning).toContainText('could not be loaded');
+    await expect(warning).toContainText('tile.openstreetmap.org');
+    await expect(warning).toContainText('Everything else on this page is unaffected');
+    // The attribution is about the data, so it stays on screen either way.
+    await expect(page.locator('.map-frame__credit')).toContainText('OpenStreetMap contributors');
+  });
+
+  test('no map, no remote request: the rest of the application stays offline', async ({ page }) => {
+    const external = [];
+    page.on('request', (request) => {
+      const url = request.url();
+      if (!url.startsWith('http://127.0.0.1:')) external.push(url);
+    });
+    for (const hash of ['#/', '#/search', '#/search?view=map', '#/property/lon-01', '#/compare?ids=lis-01,ber-01', '#/research', '#/saved', '#/sources']) {
+      await openRoute(page, hash);
+      if (hash !== '#/search?view=map') continue;
+      // No city selected, so the map view offers the written explanation instead.
+      await expect(page.locator('.map-placeholder')).toContainText('Choose one city to see a map');
+      expect(await page.locator('.leaflet-container').count()).toBe(0, 'no canvas is created without a city to centre on');
+    }
+    // With no map drawn there is nothing remote to fetch: not a tile, not a font.
     expect(external, `third-party requests: ${external.join(', ')}`).toEqual([]);
+  });
+
+  test('a record with checked coordinates is plotted, with its source named', async ({ page }) => {
+    /**
+     * The demo dataset deliberately holds no coordinates, so the plotting path is
+     * exercised with a record shaped the way licensed data will arrive. This is the
+     * test that proves the map lights up when real data is connected — and that it
+     * stays dark for every fictional record.
+     */
+    const upstream = await page.request.get('http://127.0.0.1:5199/api/listings');
+    const payload = await upstream.json();
+    const target = payload.listings.find((listing) => listing.id === 'ber-01');
+    const fixture = {
+      ...payload,
+      listings: payload.listings.map((listing) => listing.id !== 'ber-01' ? listing : {
+        ...listing,
+        provenance: { ...listing.provenance, isDemo: false },
+        source: { ...listing.source, url: 'https://example.test/records/ber-01' },
+        coordinates: {
+          lat: 52.4875,
+          lng: 13.4244,
+          source: 'the partner feed’s own geocoding (checked by the operator)',
+          checkedAt: '2026-10-01',
+          note: 'Rounded to four decimal places by the provider.'
+        }
+      })
+    };
+    expect(target).toBeTruthy();
+    await page.route('**/api/listings', (route) => route.fulfill({ status: 200, contentType: 'application/json', body: JSON.stringify(fixture) }));
+
+    const requests = [];
+    page.on('request', (request) => requests.push(request.url()));
+
+    await openRoute(page, '#/property/ber-01');
+    await page.waitForSelector('.map-frame__canvas.leaflet-container');
+    await expect(page.locator('.map-pin')).toHaveCount(1);
+    await expect(page.locator('.panel', { hasText: 'Where it is' })).toContainText('coordinates supplied by');
+    await expect(page.locator('.panel', { hasText: 'Where it is' })).toContainText('1 October 2026');
+    await expect(page.locator('.map-frame__credit')).toContainText('OpenStreetMap contributors');
+
+    // Every remote request is a tile from the configured host, nothing else.
+    for (const url of requests.filter((entry) => !entry.startsWith('http://127.0.0.1:'))) {
+      expect(url).toMatch(/^https:\/\/tile\.openstreetmap\.org\//);
+    }
   });
 
   test('the API answers are used, and the served page holds no secrets', async ({ page }) => {

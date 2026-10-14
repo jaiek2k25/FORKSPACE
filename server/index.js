@@ -21,10 +21,13 @@ import { createGeocoder } from './geocode.js';
 import { loadListings } from './listings-service.js';
 
 export function createApp(config, { ai = createAiAdapter(config), geocoder = createGeocoder(config), limiters = createLimiters(config) } = {}) {
+  // The only remote origin the browser may load from, and only when map tiles are
+  // configured. Everything else in the policy stays 'self'.
+  const tileOrigin = config.map?.enabled ? config.map.tileOrigin : '';
   const server = http.createServer(async (req, res) => {
     const started = Date.now();
     try {
-      applySecurityHeaders(res, { hstsMaxAge: config.hstsMaxAge, api: false });
+      applySecurityHeaders(res, { hstsMaxAge: config.hstsMaxAge, api: false, tileOrigin });
       const url = new URL(req.url || '/', `http://${req.headers.host || 'localhost'}`);
       const isApi = url.pathname === '/api' || url.pathname.startsWith('/api/');
 
@@ -36,6 +39,9 @@ export function createApp(config, { ai = createAiAdapter(config), geocoder = cre
         // Write methods never touch the file system.
         sendError(res, 405, 'method_not_allowed', 'This server serves static files read-only. Only GET and HEAD are allowed.');
       } else if (url.pathname === '/' || url.pathname === '/index.html') {
+        // The shell is the only document, so it is the only response that may send
+        // a referrer — and only the bare origin, which the tile policy requires.
+        applySecurityHeaders(res, { hstsMaxAge: config.hstsMaxAge, tileOrigin, document: true });
         const result = await serveStatic(req, res, { root: config.root, urlPath: '/index.html', hstsMaxAge: config.hstsMaxAge, securityHeaders: () => ({}) });
         if (result.status !== 200 && !res.headersSent) sendError(res, 404, 'not_found', 'index.html is missing from this deployment.');
       } else {

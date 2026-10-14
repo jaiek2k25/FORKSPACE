@@ -153,19 +153,41 @@ test('search: a query that matches nothing shows an empty state that explains it
   assert.ok(browser.$$('button, a').some((node) => /reset|clear/i.test(node.textContent)), 'the empty state offers a way out');
 });
 
-test('search: the map view is a labelled stylised layout, never a live map', async () => {
+test('search: the map view says what a map can and cannot show here', async () => {
   await browser.goto('#/search?view=map');
   await browser.settle(220);
-  const placeholder = browser.$('.map-placeholder');
-  assert.ok(placeholder, 'the map placeholder renders');
-  const text = placeholder.textContent.replace(/\s+/g, ' ');
-  assert.match(text, /not a live map/i);
-  assert.match(text, /OpenStreetMap|no coordinates|illustrative/i);
-  const canvas = browser.$('.map-placeholder__canvas');
-  assert.equal(canvas.getAttribute('role'), 'group');
-  assert.match(canvas.getAttribute('aria-label'), /not a live map/i);
+  const panel = browser.$('.map-frame');
+  assert.ok(panel, 'the map panel renders');
+  const text = panel.textContent.replace(/\s+/g, ' ');
+
+  // With no single city chosen there is no map to draw, and the panel explains why.
+  assert.ok(browser.$('.map-placeholder'), 'the written explanation renders instead of an empty canvas');
+  assert.match(text, /choose one city to see a map/i);
+  assert.match(text, /never invents them|no coordinates/i);
+  assert.match(text, /never scrapes a map service/i);
+  // No map is created, so nothing remote is requested from the jsdom render.
+  assert.equal(browser.$('.map-frame__canvas .leaflet-container'), null);
+
   // The list is still available beside it.
   assert.ok(browser.$$('.results-grid .card').length >= 10);
+});
+
+test('search: one city selected offers its centre, and still plots no home', async () => {
+  await browser.goto('#/search?view=map&cities=tokyo');
+  await browser.settle(320);
+  const frame = browser.$('.map-frame');
+  const text = frame.textContent.replace(/\s+/g, ' ');
+  assert.match(text, /Map of Tokyo/i, 'the map names the city it centres on');
+  assert.match(text, /nothing plotted/i);
+  assert.match(text, /no home in this dataset carries a checked location/i);
+  // The credit is present in the markup even when the tile layer cannot load.
+  const credit = browser.$('.map-frame__credit');
+  assert.ok(credit, 'the OpenStreetMap credit is always rendered with the map');
+  assert.match(credit.textContent, /OpenStreetMap contributors/);
+  assert.match(credit.querySelector('a').getAttribute('href'), /openstreetmap\.org\/copyright/);
+  assert.match(credit.textContent, /City centre from a static table dated/, 'the centre is labelled as a static table');
+  // Schema-level rule restated where it matters: no demo record is ever plotted.
+  assert.equal(browser.$$('.map-pin').length, 0, 'no pin is drawn for a fictional record');
 });
 
 test('search: selecting homes fills the comparison bar and links to the comparison', async () => {

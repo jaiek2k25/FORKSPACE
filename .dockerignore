@@ -17,9 +17,6 @@ test-results/
 playwright-report/
 coverage/
 
-# Documentation sources are served from the repo, not the image.
-docs/
-
 # Editor and OS noise.
 .vscode/
 .idea/

@@ -132,10 +132,33 @@ export function validateListing(listing) {
 
   if (!Array.isArray(listing.amenities)) errors.push('amenities must be an array');
 
-  // Demo records must never look verified or carry a source URL.
+  /**
+   * Location. Optional, because most records legitimately have none, but when it
+   * is present it is checked hard: a coordinate plotted on a map is a factual
+   * claim about where a home is.
+   */
+  if (listing.coordinates !== undefined && listing.coordinates !== null) {
+    const { lat, lng, source, checkedAt } = listing.coordinates;
+    if (typeof lat !== 'number' || !Number.isFinite(lat) || lat < -90 || lat > 90) {
+      errors.push('coordinates.lat must be a number between -90 and 90');
+    }
+    if (typeof lng !== 'number' || !Number.isFinite(lng) || lng < -180 || lng > 180) {
+      errors.push('coordinates.lng must be a number between -180 and 180');
+    }
+    // A pin without provenance is an unverifiable claim, so both are required.
+    if (typeof source !== 'string' || source.trim().length < 3) {
+      errors.push('coordinates.source is required: a plotted location must say where it came from');
+    }
+    if (typeof checkedAt !== 'string' || Number.isNaN(new Date(checkedAt).getTime())) {
+      errors.push('coordinates.checkedAt must be an ISO date: a plotted location must say when it was checked');
+    }
+  }
+
+  // Demo records must never look verified, carry a source URL, or be plotted.
   if (listing.provenance?.isDemo) {
     if (listing.source?.url) errors.push('demo records must not carry a source URL');
     if (listing.verification?.lastVerifiedAt) errors.push('demo records must not carry a verification timestamp');
+    if (listing.coordinates) errors.push('demo records must not carry coordinates: a fictional home must never be plotted on a real map');
   }
 
   return { ok: errors.length === 0, errors, warnings };
