@@ -1,0 +1,28 @@
+# Never ship any of this.
+.git
+.gitignore
+.env
+.env.*
+!.env.example
+
+# Licensed data and open-data spreadsheets must stay out of the image.
+data-imports/
+tools/open-data/
+tools/raw-photos/
+
+# Tests, test artefacts and tooling.
+tests/
+tools/
+test-results/
+playwright-report/
+coverage/
+
+# Documentation sources are served from the repo, not the image.
+docs/
+
+# Editor and OS noise.
+.vscode/
+.idea/
+.DS_Store
+*.log
+node_modules

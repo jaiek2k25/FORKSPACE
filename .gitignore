@@ -1,0 +1,25 @@
+# Secrets — never committed
+.env
+.env.*
+!.env.example
+
+# Runtime import folder for licensed files (never web-served, never committed)
+data-imports/
+
+# Open data spreadsheets and generated raw files
+tools/open-data/*.xlsx
+tools/open-data/*.xls
+tools/open-data/*.csv
+tools/open-data/raw/
+
+# Tooling output
+tools/raw-photos/
+test-results/
+playwright-report/
+coverage/
+screenshots/
+
+# Dependencies and OS noise
+node_modules/
+.DS_Store
+*.log
